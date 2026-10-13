@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}AI Car Concept Lab{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
 </head>
 <body>
   <div class="noise"></div>
@@ -17,11 +17,11 @@
     </nav>
     <a href="{{ url_for('studio') }}" class="btn btn-primary small">Design Now</a>
   </header>
- 
+
   <main>
     {% block content %}{% endblock %}
   </main>
- 
+
   <footer class="site-footer">
     <p>Built with Flask, structured prompts, session history, and a futuristic product workflow.</p>
   </footer>

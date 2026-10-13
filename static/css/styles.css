@@ -109,3 +109,5 @@ input[type="color"] { height: 54px; padding: 8px; }
   .nav-links { order: 3; width: 100%; justify-content: center; }
   .result-header, .history-head, .svg-toolbar, .row-space { flex-direction: column; }
 }
+
+.form-error{min-height:1.25rem;color:#fca5a5;font-size:.94rem;margin:.5rem 0 0;}

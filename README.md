@@ -10,6 +10,7 @@ A stylish three-page Flask app that turns a structured brief into a futuristic c
 - Session-based concept history[cite: 1]
 - Futuristic UI with live colorway cards and SVG concept render[cite: 1]
 - External concept image via Pollinations image prompt URL[cite: 1]
+- Optional hCaptcha protection for concept generation[cite: 1]
 
 ## Folder Structure[cite: 1]
 ```text
@@ -41,4 +42,5 @@ Then open `http://127.0.0.1:5000`.[cite: 1]
 
 ## Notes[cite: 1]
 - If you do not add a Groq key, the app still works using a polished local fallback generator.[cite: 1]
+- To enable hCaptcha, set both `HCAPTCHA_SITE_KEY` and `HCAPTCHA_SECRET_KEY`; generation requests are verified server-side. Leave both unset to disable CAPTCHA for local development.[cite: 1]
 - History is stored in the browser session.[cite: 1]

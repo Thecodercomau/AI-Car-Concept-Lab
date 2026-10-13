@@ -12,7 +12,7 @@
       <button class="btn btn-secondary" id="clearHistoryBtn">Clear History</button>
     {% endif %}
   </div>
- 
+
   {% if designs %}
     <div class="history-grid">
       {% for item in designs %}
@@ -33,9 +33,9 @@
             <div class="swatch-card">
               <strong>{{ cw.name }}</strong>
               <div class="mini-swatches">
-                <span data-color="{{ cw.body if cw.body and (cw.body|string|lower) not in ['none', 'null', ''] else '#202124' }}"></span>
-                <span data-color="{{ cw.accent if cw.accent and (cw.accent|string|lower) not in ['none', 'null', ''] else '#8aa7ff' }}"></span>
-                <span data-color="{{ cw.wheels if cw.wheels and (cw.wheels|string|lower) not in ['none', 'null', ''] else '#5f6368' }}"></span>
+                <span class="mini-swatch" data-color="{{ cw.body|default('#d9d9d9') }}"></span>
+                <span class="mini-swatch" data-color="{{ cw.accent|default('#b0b0b0') }}"></span>
+                <span class="mini-swatch" data-color="{{ cw.wheels|default('#2d2d2d') }}"></span>
               </div>
             </div>
             {% endfor %}
@@ -62,9 +62,5 @@ if (clearBtn) {
     location.reload();
   });
 }
-
-document.querySelectorAll('.mini-swatches span[data-color]').forEach((swatch) => {
-  swatch.style.backgroundColor = swatch.dataset.color;
-});
 </script>
 {% endblock %}
