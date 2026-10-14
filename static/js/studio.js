@@ -1,4 +1,22 @@
 (() => {
+  const HF_CHAT_COMPLETIONS_URL = 'https://router.huggingface.co/v1/chat/completions'
+  const HF_MODEL = 'Qwen/Qwen2.5-7B-Instruct'
+  const CONCEPT_SCHEMA = `{
+  "name": "2-4 word creative car name",
+  "tagline": "punchy tagline max 10 words",
+  "description": "2-3 sentence cinematic concept description",
+  "materials": ["mat1", "mat2", "mat3"],
+  "colorways": [
+    {"name": "Launch Spec", "body": "#RRGGBB", "accent": "#RRGGBB", "wheels": "#RRGGBB", "cabin": "#RRGGBB"}
+  ],
+  "features": ["feat1", "feat2", "feat3", "feat4"],
+  "powertrain": "power system description",
+  "cockpit_theme": "cockpit mood and interface idea",
+  "target_driver": "who this concept is for",
+  "retail_price": "$XXX,XXX",
+  "style_tags": ["tag1", "tag2", "tag3"]
+}`
+
   const form = document.getElementById('conceptForm')
   const emptyState = document.getElementById('emptyState')
   const loadingState = document.getElementById('loadingState')
@@ -25,22 +43,96 @@
     formError.textContent = ''
     toggleStates('loading')
     try {
-      const prefs = Object.fromEntries(new FormData(form).entries())
-      const resp = await fetch('/generate', {
+      const formData = new FormData(form)
+      const prefs = Object.fromEntries(formData.entries())
+      const hfToken = prefs.hf_token
+      delete prefs.hf_token
+      const captchaToken = prefs['h-captcha-response']
+      delete prefs['h-captcha-response']
+      if (!hfToken) throw new Error('Enter a Hugging Face access token to continue.')
+
+      const captchaResponse = await fetch('/verify-captcha', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(prefs),
+        body: JSON.stringify({ 'h-captcha-response': captchaToken || '' }),
       })
-      const data = await resp.json()
-      if (!resp.ok || !data.success) throw new Error(data.error || 'Something went wrong.')
+      const captchaData = await captchaResponse.json()
+      if (!captchaResponse.ok || !captchaData.success) {
+        throw new Error(captchaData.error || 'CAPTCHA verification failed.')
+      }
+
+      const hfResponse = await fetch(HF_CHAT_COMPLETIONS_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${hfToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: HF_MODEL,
+          messages: [
+            {
+              role: 'system',
+              content: 'You are an automotive concept designer. Return only a valid JSON object. Do not include markdown.',
+            },
+            {
+              role: 'user',
+              content: `Create a distinct futuristic car concept from this brief:
+Style: ${prefs.style}
+Primary color: ${prefs.primary_color}
+Accent color: ${prefs.accent_color}
+Material: ${prefs.material}
+Occasion: ${prefs.occasion}
+Inspiration: ${prefs.inspiration}
+
+Follow this JSON shape exactly, with exactly 3 colorways and valid #RRGGBB color values:
+${CONCEPT_SCHEMA}`,
+            },
+          ],
+          temperature: 0.85,
+          max_tokens: 1200,
+        }),
+      })
+      const hfData = await hfResponse.json().catch(() => null)
+      if (!hfResponse.ok) {
+        throw new Error(`Hugging Face request failed (${hfResponse.status}). Check your token and Inference Providers access.`)
+      }
+
+      const content = hfData?.choices?.[0]?.message?.content
+      if (typeof content !== 'string' || !content.trim()) {
+        throw new Error('Hugging Face returned an empty response. Please try again.')
+      }
+      const concept = parseConceptJson(content)
+      const saveResponse = await fetch('/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...prefs, concept }),
+      })
+      const data = await saveResponse.json().catch(() => null)
+      if (!saveResponse.ok || !data.success) throw new Error(data.error || 'Could not save the generated concept.')
       renderConcept(data.concept)
       toggleStates('result')
     } catch (error) {
       toggleStates('empty')
-      formError.textContent = error.message || 'Could not generate the concept.'
+      formError.textContent = error instanceof Error ? error.message : 'Could not generate the concept.'
       window.hcaptcha?.reset()
     }
   })
+
+  function parseConceptJson(content) {
+    const cleaned = content.trim()
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/, '')
+    const jsonStart = cleaned.indexOf('{')
+    const jsonEnd = cleaned.lastIndexOf('}')
+    if (jsonStart < 0 || jsonEnd < jsonStart) {
+      throw new Error('Hugging Face returned a response that was not JSON. Please try again.')
+    }
+    try {
+      return JSON.parse(cleaned.slice(jsonStart, jsonEnd + 1))
+    } catch {
+      throw new Error('Hugging Face returned invalid JSON. Please try again.')
+    }
+  }
 
   function toggleStates(mode) {
     emptyState.classList.toggle('hidden', mode !== 'empty')

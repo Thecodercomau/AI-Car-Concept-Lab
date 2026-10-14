@@ -114,36 +114,24 @@ def generate() -> Any:
     if any(not v for v in prefs.values()):
         return jsonify({"error": "Please complete every field in the design brief."}), 400
 
-    if HCAPTCHA_SITE_KEY or HCAPTCHA_SECRET_KEY:
-        if not HCAPTCHA_SITE_KEY or not HCAPTCHA_SECRET_KEY:
-            return jsonify({"error": "CAPTCHA is not configured correctly."}), 503
+    if not session.pop("hcaptcha_verified", False):
+        captcha_error = verify_hcaptcha(data)
+        if captcha_error:
+            message, status = captcha_error
+            return jsonify({"error": message}), status
 
-        captcha_token = str(data.get("h-captcha-response", "")).strip()
-        if not captcha_token:
-            return jsonify({"error": "Please complete the CAPTCHA."}), 400
-
+    submitted_concept = data.get("concept")
+    if submitted_concept is not None:
+        if not is_valid_concept(submitted_concept):
+            return jsonify({"error": "Generated concept has an invalid format."}), 400
+        concept = sanitize_concept(submitted_concept, prefs)
+    else:
         try:
-            verification_response = requests.post(
-                "https://api.hcaptcha.com/siteverify",
-                data={"secret": HCAPTCHA_SECRET_KEY, "response": captcha_token},
-                timeout=5,
-            )
-            verification_response.raise_for_status()
-            verification = verification_response.json()
-        except (requests.RequestException, ValueError):
-            return jsonify({"error": "CAPTCHA verification is temporarily unavailable. Please try again."}), 503
-
-        if not isinstance(verification, dict):
-            return jsonify({"error": "CAPTCHA verification is temporarily unavailable. Please try again."}), 503
-        if verification.get("success") is not True:
-            return jsonify({"error": "CAPTCHA verification failed. Please try again."}), 400
-
-    try:
-        concept = generate_concept(prefs)
-    except json.JSONDecodeError as exc:
-        return jsonify({"error": f"Malformed AI response: {exc}"}), 500
-    except Exception as exc:  # noqa: BLE001
-        return jsonify({"error": f"Concept generation failed: {exc}"}), 500
+            concept = generate_concept(prefs)
+        except json.JSONDecodeError as exc:
+            return jsonify({"error": f"Malformed AI response: {exc}"}), 500
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": f"Concept generation failed: {exc}"}), 500
 
     concept["image_url"] = build_image_url(concept, prefs)
     concept["brief"] = prefs
@@ -151,6 +139,45 @@ def generate() -> Any:
     concept["fingerprint"] = fingerprint(prefs, concept["name"])
     add_to_history(concept)
     return jsonify({"success": True, "concept": concept, "prefs": prefs})
+
+
+@app.route("/verify-captcha", methods=["POST"])
+def verify_captcha() -> Any:
+    data = request.get_json(silent=True) or {}
+    captcha_error = verify_hcaptcha(data)
+    if captcha_error:
+        message, status = captcha_error
+        return jsonify({"error": message}), status
+    session["hcaptcha_verified"] = True
+    return jsonify({"success": True})
+
+
+def verify_hcaptcha(data: Any) -> tuple[str, int] | None:
+    if not HCAPTCHA_SITE_KEY and not HCAPTCHA_SECRET_KEY:
+        return None
+    if not HCAPTCHA_SITE_KEY or not HCAPTCHA_SECRET_KEY:
+        return "CAPTCHA is not configured correctly.", 503
+
+    captcha_token = str(getattr(data, "get", lambda *_: "")("h-captcha-response", "")).strip()
+    if not captcha_token:
+        return "Please complete the CAPTCHA.", 400
+
+    try:
+        verification_response = requests.post(
+            "https://api.hcaptcha.com/siteverify",
+            data={"secret": HCAPTCHA_SECRET_KEY, "response": captcha_token},
+            timeout=5,
+        )
+        verification_response.raise_for_status()
+        verification = verification_response.json()
+    except (requests.RequestException, ValueError):
+        return "CAPTCHA verification is temporarily unavailable. Please try again.", 503
+
+    if not isinstance(verification, dict):
+        return "CAPTCHA verification is temporarily unavailable. Please try again.", 503
+    if verification.get("success") is not True:
+        return "CAPTCHA verification failed. Please try again.", 400
+    return None
 
 
 @app.route("/clear-history", methods=["POST"])
@@ -229,7 +256,15 @@ def is_valid_concept(concept: dict[str, Any]) -> bool:
         "name", "tagline", "description", "materials", "features", "powertrain",
         "cockpit_theme", "target_driver", "retail_price", "style_tags", "colorways",
     }
-    return required.issubset(concept.keys()) and isinstance(concept.get("colorways"), list)
+    if not isinstance(concept, dict) or not required.issubset(concept):
+        return False
+    text_fields = required - {"materials", "features", "style_tags", "colorways"}
+    return (
+        all(isinstance(concept[field], str) and concept[field].strip() for field in text_fields)
+        and all(isinstance(concept[field], list) for field in ("materials", "features", "style_tags", "colorways"))
+        and all(isinstance(item, str) for field in ("materials", "features", "style_tags") for item in concept[field])
+        and all(isinstance(item, dict) for item in concept["colorways"])
+    )
 
 
 def sanitize_concept(concept: dict[str, Any], brief: dict[str, str]) -> dict[str, Any]:

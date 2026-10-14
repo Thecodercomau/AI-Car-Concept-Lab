@@ -58,6 +58,11 @@
         <label for="inspiration">Inspiration</label>
         <textarea id="inspiration" name="inspiration" rows="4" placeholder="Example: Tokyo neon rain, desert eclipse, aurora over ice highways" required></textarea>
       </div>
+      <div>
+        <label for="hfToken">Hugging Face access token</label>
+        <input type="password" id="hfToken" name="hf_token" autocomplete="off" required>
+        <p class="form-note">Used only for this request and sent directly to Hugging Face. It is not saved or sent to this app.</p>
+      </div>
       {% if hcaptcha_site_key %}
       <div class="h-captcha" data-sitekey="{{ hcaptcha_site_key }}"></div>
       {% endif %}
