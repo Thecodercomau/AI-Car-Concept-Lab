@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import random
 import re
 from datetime import datetime
@@ -10,13 +9,6 @@ from typing import Any
 from urllib.parse import quote_plus
 
 import requests
-
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - optional runtime dependency
-    def load_dotenv(*_args: Any, **_kwargs: Any) -> bool:
-        return False
-
 from flask import Flask, jsonify, render_template, request, session
 
 try:
@@ -24,16 +16,18 @@ try:
 except ImportError:  # pragma: no cover - optional runtime dependency
     Groq = None
 
-load_dotenv()
+from config import (
+    FLASK_SECRET_KEY,
+    GROQ_API_KEY,
+    GROQ_MODEL,
+    HCAPTCHA_SECRET_KEY,
+    HCAPTCHA_SITE_KEY,
+)
 
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "ai-car-concept-lab-dev-key")
+app.secret_key = FLASK_SECRET_KEY
 app.config["SESSION_PERMANENT"] = False
 
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
-HCAPTCHA_SITE_KEY = os.environ.get("HCAPTCHA_SITE_KEY", "")
-HCAPTCHA_SECRET_KEY = os.environ.get("HCAPTCHA_SECRET_KEY", "")
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY and Groq else None
 MAX_HISTORY = 12
 

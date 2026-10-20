@@ -12,10 +12,11 @@ A stylish three-page Flask app that turns a structured brief into a futuristic c
 - External concept image via Pollinations image prompt URL[cite: 1]
 - Optional hCaptcha protection for concept generation[cite: 1]
 
-## Folder Structure[cite: 1]
+## Folder Structure
 ```text
 ai-car-concept-lab/
 ├── app.py
+├── config.py
 ├── requirements.txt
 ├── .env.example
 ├── README.md
@@ -26,22 +27,32 @@ ai-car-concept-lab/
 │   └── history.html
 └── static/
     ├── css/
-    │   └── style.css
+    │   └── styles.css
     └── js/
         └── studio.js
-```[cite: 1]
+```
 
-## Run[cite: 1]
+## Run
 ```bash
+python -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 python app.py
-```[cite: 1]
+```
 
-Then open `http://127.0.0.1:5000`.[cite: 1]
+Then open `http://127.0.0.1:5000`.
 
-## Notes[cite: 1]
-- The Studio requires a Hugging Face token; server-side `/generate` callers can use Groq when configured or the local fallback otherwise.[cite: 1]
-- In the Studio, provide a Hugging Face access token with permission to call Inference Providers. The browser sends the token directly to Hugging Face for that request; it is not stored or sent to the Flask app. The Studio uses `Qwen/Qwen2.5-7B-Instruct` by default.[cite: 1]
-- To enable hCaptcha, set both `HCAPTCHA_SITE_KEY` and `HCAPTCHA_SECRET_KEY`; generation requests are verified server-side. Leave both unset to disable CAPTCHA for local development.[cite: 1]
-- History is stored in the browser session.[cite: 1]
+## Environment
+The app reads configuration from `config.py`, which loads `.env` automatically. Place your keys in `.env` using either the standard names or their legacy aliases:
+
+- `GROQ_API_KEY`
+- `HCAPTCHA_SITE_KEY`
+- `HCAPTCHA_SECRET_KEY` (also accepts `HCAPTCHA_SECRET`)
+- `HF_API_KEY` (also accepts `HF_TOKEN` / `HUGGINGFACE_API_KEY`)
+
+## Notes
+- The Studio requires a Hugging Face token; server-side `/generate` callers can use Groq when configured or the local fallback otherwise.
+- In the Studio, provide a Hugging Face access token with permission to call Inference Providers. The browser sends the token directly to Hugging Face for that request; it is not stored or sent to the Flask app. The Studio uses `Qwen/Qwen2.5-7B-Instruct` by default.
+- To enable hCaptcha, set both `HCAPTCHA_SITE_KEY` and `HCAPTCHA_SECRET_KEY`; generation requests are verified server-side. Leave both unset to disable CAPTCHA for local development.
+- History is stored in the browser session and is intentionally kept as a lightweight placeholder for this lesson.
