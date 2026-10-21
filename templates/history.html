@@ -6,7 +6,7 @@
     <div>
       <span class="eyebrow">Session Gallery</span>
       <h1>Review your generated car concepts.</h1>
-      <p>Compare naming, positioning, colorways, and design direction across all concepts in this session.</p>
+      <p>Compare naming, positioning, colorways, and design direction across all {{ designs|length }} concept{% if designs|length != 1 %}s{% endif %} saved in this browser session.</p>
     </div>
     {% if designs %}
       <button class="btn btn-secondary" id="clearHistoryBtn">Clear History</button>
@@ -17,11 +17,14 @@
     <div class="history-grid">
       {% for item in designs %}
       <article class="history-card">
-        <img src="{{ item.image_url }}" alt="{{ item.name }} concept image">
+        <img src="{{ item.image_url }}" alt="{{ item.name }} concept image" loading="lazy" onerror="this.onerror=null;this.src='{{ url_for('static', filename='img/car-placeholder.svg') }}'">
         <div class="history-content">
           <div class="row-space">
-            <h3>{{ item.name }}</h3>
-            <span class="history-time">{{ item.timestamp }}</span>
+            <div>
+              <h3>{{ item.name }}</h3>
+              <span class="history-time">{{ item.timestamp }}</span>
+            </div>
+            <span class="price-pill small">{{ item.retail_price }}</span>
           </div>
           <p class="lead small-lead">{{ item.tagline }}</p>
           <p class="history-desc">{{ item.description }}</p>
@@ -33,14 +36,31 @@
             <div class="swatch-card">
               <strong>{{ cw.name }}</strong>
               <div class="mini-swatches">
-                <span class="mini-swatch" data-color="{{ cw.body|default('#d9d9d9') }}"></span>
-                <span class="mini-swatch" data-color="{{ cw.accent|default('#b0b0b0') }}"></span>
-                <span class="mini-swatch" data-color="{{ cw.wheels|default('#2d2d2d') }}"></span>
+                <span class="mini-swatch" style="background: {{ cw.body|default('#d9d9d9') }}" title="Body {{ cw.body }}"></span>
+                <span class="mini-swatch" style="background: {{ cw.accent|default('#b0b0b0') }}" title="Accent {{ cw.accent }}"></span>
+                <span class="mini-swatch" style="background: {{ cw.wheels|default('#2d2d2d') }}" title="Wheels {{ cw.wheels }}"></span>
+                <span class="mini-swatch" style="background: {{ cw.cabin|default('#e5e7eb') }}" title="Cabin {{ cw.cabin }}"></span>
               </div>
             </div>
             {% endfor %}
           </div>
-          <div class="brief-summary">{{ item.brief.style }} · {{ item.brief.material }} · {{ item.brief.occasion }}</div>
+          <p class="brief-summary">{{ item.brief.style }} · {{ item.brief.material }} · {{ item.brief.occasion }} · {{ item.brief.inspiration }}</p>
+          <details class="history-details">
+            <summary>Materials, features &amp; specs</summary>
+            <div class="history-detail-grid">
+              <div>
+                <h4>Materials</h4>
+                <ul>{% for material in item.materials %}<li>{{ material }}</li>{% endfor %}</ul>
+              </div>
+              <div>
+                <h4>Features</h4>
+                <ul>{% for feature in item.features %}<li>{{ feature }}</li>{% endfor %}</ul>
+              </div>
+              <div><h4>Powertrain</h4><p>{{ item.powertrain }}</p></div>
+              <div><h4>Cockpit</h4><p>{{ item.cockpit_theme }}</p></div>
+              <div><h4>Target driver</h4><p>{{ item.target_driver }}</p></div>
+            </div>
+          </details>
         </div>
       </article>
       {% endfor %}
@@ -58,8 +78,17 @@
 const clearBtn = document.getElementById('clearHistoryBtn');
 if (clearBtn) {
   clearBtn.addEventListener('click', async () => {
-    await fetch('/clear-history', { method: 'POST' });
-    location.reload();
+    clearBtn.disabled = true;
+    clearBtn.textContent = 'Clearing...';
+    try {
+      const response = await fetch('/clear-history', { method: 'POST' });
+      if (!response.ok) throw new Error('Could not clear history.');
+      location.reload();
+    } catch (error) {
+      clearBtn.disabled = false;
+      clearBtn.textContent = 'Clear History';
+      alert(error instanceof Error ? error.message : 'Could not clear history.');
+    }
   });
 }
 </script>

@@ -5,11 +5,14 @@ import json
 import random
 import re
 from datetime import datetime
+from html import escape as html_escape
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote_plus
 
 import requests
-from flask import Flask, jsonify, render_template, request, session
+from flask import Flask, Response, abort, jsonify, render_template, request, send_file, session, url_for
+from flask_session import Session
 
 try:
     from groq import Groq
@@ -17,19 +20,33 @@ except ImportError:  # pragma: no cover - optional runtime dependency
     Groq = None
 
 from config import (
+    BASE_DIR,
     FLASK_SECRET_KEY,
     GROQ_API_KEY,
     GROQ_MODEL,
     HCAPTCHA_SECRET_KEY,
     HCAPTCHA_SITE_KEY,
+    PORT,
+    SESSION_FILE_DIR,
 )
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
-app.config["SESSION_PERMANENT"] = False
+app.config.update(
+    SESSION_PERMANENT=False,
+    SESSION_TYPE="filesystem",
+    SESSION_FILE_DIR=SESSION_FILE_DIR,
+    SESSION_USE_SIGNER=True,
+    SESSION_SERIALIZATION_FORMAT="json",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_CLEANUP_N_REQUESTS=100,
+)
+Session(app)
 
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY and Groq else None
-MAX_HISTORY = 12
+MAX_INSPIRATION_LENGTH = 240
+IMAGE_CACHE_DIR = Path(BASE_DIR) / ".image_cache"
 
 STYLE_TAGS = {
     "Hypercar": ["aggressive aero", "track-born drama", "hero stance"],
@@ -104,6 +121,8 @@ def history() -> str:
 @app.route("/generate", methods=["POST"])
 def generate() -> Any:
     data = request.get_json(silent=True) or request.form
+    if not hasattr(data, "get"):
+        return jsonify({"error": "Invalid request payload."}), 400
     prefs = get_prefs(data)
     if any(not v for v in prefs.values()):
         return jsonify({"error": "Please complete every field in the design brief."}), 400
@@ -127,12 +146,70 @@ def generate() -> Any:
         except Exception as exc:  # noqa: BLE001
             return jsonify({"error": f"Concept generation failed: {exc}"}), 500
 
-    concept["image_url"] = build_image_url(concept, prefs)
     concept["brief"] = prefs
     concept["timestamp"] = datetime.now().strftime("%d %b %Y, %I:%M %p")
     concept["fingerprint"] = fingerprint(prefs, concept["name"])
+    concept["image_url"] = url_for("concept_image", key=concept["fingerprint"])
     add_to_history(concept)
     return jsonify({"success": True, "concept": concept, "prefs": prefs})
+
+
+@app.route("/concept-image/<key>")
+def concept_image(key: str) -> Response:
+    """Proxy and cache the AI render, with a colorway placeholder on provider errors."""
+    if not re.fullmatch(r"[0-9a-f]{14}", key):
+        abort(404)
+    concept = next((item for item in get_history() if item.get("fingerprint") == key), None)
+    if concept is None:
+        abort(404)
+
+    cached = next(IMAGE_CACHE_DIR.glob(f"{key}.*"), None) if IMAGE_CACHE_DIR.is_dir() else None
+    if cached and cached.is_file():
+        return send_file(cached, max_age=86400)
+
+    try:
+        response = requests.get(build_image_url(concept, concept["brief"]), timeout=25)
+        content_type = response.headers.get("content-type", "")
+        if response.ok and content_type.startswith("image/"):
+            extension = {"image/png": "png", "image/webp": "webp", "image/jpeg": "jpg"}.get(
+                content_type.split(";")[0].strip(), "jpg"
+            )
+            IMAGE_CACHE_DIR.mkdir(exist_ok=True)
+            image_path = IMAGE_CACHE_DIR / f"{key}.{extension}"
+            image_path.write_bytes(response.content)
+            return Response(response.content, mimetype=content_type, headers={"Cache-Control": "public, max-age=86400"})
+    except (requests.RequestException, OSError):
+        app.logger.warning("AI render unavailable; serving the colorway placeholder", exc_info=True)
+
+    return Response(colorway_placeholder(concept), mimetype="image/svg+xml", headers={"Cache-Control": "no-store"})
+
+
+def colorway_placeholder(concept: dict[str, Any]) -> str:
+    """Build a color-matched SVG card for when the image provider is unavailable."""
+    colorway = (concept.get("colorways") or [{}])[0]
+    body = normalize_hex(str(colorway.get("body", "#1d4ed8")), "#1d4ed8")
+    accent = normalize_hex(str(colorway.get("accent", "#f97316")), "#f97316")
+    wheels = normalize_hex(str(colorway.get("wheels", "#1b1e28")), "#1b1e28")
+    cabin = normalize_hex(str(colorway.get("cabin", "#d9dce5")), "#d9dce5")
+    name = html_escape(str(concept.get("name", "Concept")), quote=True)
+    colorway_name = html_escape(str(colorway.get("name", "Launch Spec")), quote=True)
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 420" role="img" aria-label="{name} colorway preview">
+  <defs>
+    <linearGradient id="body" x1="0" x2="1"><stop offset="0" stop-color="{body}"/><stop offset="1" stop-color="{shift_hex(body, 32)}"/></linearGradient>
+    <linearGradient id="accent" x1="0" x2="1"><stop offset="0" stop-color="{accent}"/><stop offset="1" stop-color="{shift_hex(accent, 18)}"/></linearGradient>
+  </defs>
+  <rect width="780" height="420" fill="#0d1220"/>
+  <ellipse cx="390" cy="336" rx="250" ry="24" fill="{accent}" opacity=".16"/>
+  <path d="M128 264 Q176 176 314 160 L468 146 Q576 147 642 223 L684 263 L660 292 L598 292 Q582 239 530 236 Q480 238 458 292 L276 292 Q254 238 204 236 Q151 239 132 292 L98 292 Q75 292 83 270 Z" fill="url(#body)" stroke="{shift_hex(body, 52)}" stroke-width="4"/>
+  <path d="M285 168 L362 132 Q437 118 516 128 L582 214 L352 214 Z" fill="{cabin}" opacity=".86"/>
+  <path d="M170 248 L102 260" stroke="url(#accent)" stroke-width="8" stroke-linecap="round"/>
+  <path d="M614 247 L674 256" stroke="#fff2b0" stroke-width="8" stroke-linecap="round"/>
+  <path d="M323 158 Q416 135 526 146" stroke="{accent}" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="208" cy="290" r="43" fill="{wheels}"/><circle cx="208" cy="290" r="22" fill="{shift_hex(wheels, 70)}"/>
+  <circle cx="528" cy="290" r="43" fill="{wheels}"/><circle cx="528" cy="290" r="22" fill="{shift_hex(wheels, 70)}"/>
+  <text x="40" y="52" fill="#dbeafe" font-size="24" font-family="Inter, Arial" font-weight="700">{name}</text>
+  <text x="40" y="82" fill="#95a4c6" font-size="14" font-family="Inter, Arial">{colorway_name} · AI render unavailable</text>
+</svg>"""
 
 
 @app.route("/verify-captcha", methods=["POST"])
@@ -182,15 +259,11 @@ def clear_history() -> Any:
 
 
 def get_prefs(data: Any) -> dict[str, str]:
-    fields = [
-        ("style", "Hypercar"),
-        ("primary_color", "#1d4ed8"),
-        ("accent_color", "#f97316"),
-        ("material", "Carbon Fiber"),
-        ("occasion", "City Tech"),
-        ("inspiration", "Tokyo neon rain"),
-    ]
-    return {k: str(getattr(data, 'get', lambda *_: d)(k, d)).strip() for k, d in fields}
+    fields = ("style", "primary_color", "accent_color", "material", "occasion", "inspiration")
+    getter = getattr(data, "get", lambda *_: "")
+    prefs = {field: str(getter(field, "")).strip() for field in fields}
+    prefs["inspiration"] = prefs["inspiration"][:MAX_INSPIRATION_LENGTH]
+    return prefs
 
 
 def get_history() -> list[dict[str, Any]]:
@@ -200,7 +273,7 @@ def get_history() -> list[dict[str, Any]]:
 def add_to_history(concept: dict[str, Any]) -> None:
     current = session.get("designs", [])
     deduped = [d for d in current if d.get("fingerprint") != concept["fingerprint"]]
-    session["designs"] = [concept] + deduped[: MAX_HISTORY - 1]
+    session["designs"] = [concept] + deduped
     session.modified = True
 
 
@@ -211,9 +284,12 @@ def fingerprint(prefs: dict[str, str], name: str) -> str:
 
 def generate_concept(prefs: dict[str, str]) -> dict[str, Any]:
     if groq_client:
-        concept = generate_via_groq(prefs)
-        if concept:
-            return concept
+        try:
+            concept = generate_via_groq(prefs)
+            if concept:
+                return concept
+        except Exception:  # noqa: BLE001 - a provider outage must not break the studio
+            app.logger.warning("Groq generation failed; using the local concept engine", exc_info=True)
     return generate_local_concept(prefs)
 
 
@@ -296,6 +372,17 @@ def normalize_colorways(colorways: list[dict[str, Any]], brief: dict[str, str]) 
         })
     while len(cleaned) < 3:
         cleaned.append(fallback[len(cleaned)])
+    for field, step in (("body", 32), ("accent", 24)):
+        seen = {cleaned[0][field]}
+        for index in (1, 2):
+            base = cleaned[index][field]
+            if base in seen:
+                for offset in (step, -step, step * 2, -step * 2):
+                    candidate = shift_hex(base, offset)
+                    if candidate not in seen:
+                        cleaned[index][field] = candidate
+                        break
+            seen.add(cleaned[index][field])
     return cleaned
 
 
@@ -360,9 +447,12 @@ def generate_local_concept(brief: dict[str, str]) -> dict[str, Any]:
 
 
 def build_image_url(concept: dict[str, Any], brief: dict[str, str]) -> str:
+    colorway = (concept.get("colorways") or [{}])[0]
+    primary = colorway.get("body") or brief["primary_color"]
+    accent = colorway.get("accent") or brief["accent_color"]
     prompt = (
         f"futuristic concept car studio render, {concept['name']}, {brief['style']} design, "
-        f"{brief['material']} body details, primary {brief['primary_color']}, accent {brief['accent_color']}, "
+        f"{brief['material']} body details, primary {primary}, accent {accent}, "
         f"inspired by {brief['inspiration']}, front three quarter angle, premium automotive product photography, "
         f"clean background, ultra detailed"
     )
@@ -370,4 +460,4 @@ def build_image_url(concept: dict[str, Any], brief: dict[str, str]) -> str:
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=PORT)

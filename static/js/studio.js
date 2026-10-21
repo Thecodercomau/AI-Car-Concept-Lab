@@ -40,6 +40,9 @@
 
   form?.addEventListener('submit', async (event) => {
     event.preventDefault()
+    const submitButton = form.querySelector('button[type="submit"]')
+    if (submitButton?.disabled) return
+    if (submitButton) submitButton.disabled = true
     formError.textContent = ''
     toggleStates('loading')
     try {
@@ -49,34 +52,35 @@
       delete prefs.hf_token
       const captchaToken = prefs['h-captcha-response']
       delete prefs['h-captcha-response']
-      if (!hfToken) throw new Error('Enter a Hugging Face access token to continue.')
 
       const captchaResponse = await fetch('/verify-captcha', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 'h-captcha-response': captchaToken || '' }),
       })
-      const captchaData = await captchaResponse.json()
-      if (!captchaResponse.ok || !captchaData.success) {
-        throw new Error(captchaData.error || 'CAPTCHA verification failed.')
+      const captchaData = await captchaResponse.json().catch(() => null)
+      if (!captchaResponse.ok || !captchaData?.success) {
+        throw new Error(captchaData?.error || 'CAPTCHA verification failed.')
       }
 
-      const hfResponse = await fetch(HF_CHAT_COMPLETIONS_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${hfToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: HF_MODEL,
-          messages: [
-            {
-              role: 'system',
-              content: 'You are an automotive concept designer. Return only a valid JSON object. Do not include markdown.',
-            },
-            {
-              role: 'user',
-              content: `Create a distinct futuristic car concept from this brief:
+      let concept = null
+      if (hfToken) {
+        const hfResponse = await fetch(HF_CHAT_COMPLETIONS_URL, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${hfToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: HF_MODEL,
+            messages: [
+              {
+                role: 'system',
+                content: 'You are an automotive concept designer. Return only a valid JSON object. Do not include markdown.',
+              },
+              {
+                role: 'user',
+                content: `Create a distinct futuristic car concept from this brief:
 Style: ${prefs.style}
 Primary color: ${prefs.primary_color}
 Accent color: ${prefs.accent_color}
@@ -86,35 +90,40 @@ Inspiration: ${prefs.inspiration}
 
 Follow this JSON shape exactly, with exactly 3 colorways and valid #RRGGBB color values:
 ${CONCEPT_SCHEMA}`,
-            },
-          ],
-          temperature: 0.85,
-          max_tokens: 1200,
-        }),
-      })
-      const hfData = await hfResponse.json().catch(() => null)
-      if (!hfResponse.ok) {
-        throw new Error(`Hugging Face request failed (${hfResponse.status}). Check your token and Inference Providers access.`)
+              },
+            ],
+            temperature: 0.85,
+            max_tokens: 1200,
+          }),
+        })
+        const hfData = await hfResponse.json().catch(() => null)
+        if (!hfResponse.ok) {
+          throw new Error(`Hugging Face request failed (${hfResponse.status}). Check your token and Inference Providers access.`)
+        }
+
+        const content = hfData?.choices?.[0]?.message?.content
+        if (typeof content !== 'string' || !content.trim()) {
+          throw new Error('Hugging Face returned an empty response. Please try again.')
+        }
+        concept = parseConceptJson(content)
       }
 
-      const content = hfData?.choices?.[0]?.message?.content
-      if (typeof content !== 'string' || !content.trim()) {
-        throw new Error('Hugging Face returned an empty response. Please try again.')
-      }
-      const concept = parseConceptJson(content)
       const saveResponse = await fetch('/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...prefs, concept }),
+        body: JSON.stringify(concept ? { ...prefs, concept } : prefs),
       })
       const data = await saveResponse.json().catch(() => null)
-      if (!saveResponse.ok || !data.success) throw new Error(data.error || 'Could not save the generated concept.')
+      if (!saveResponse.ok || !data?.success) throw new Error(data?.error || 'Could not save the generated concept.')
       renderConcept(data.concept)
       toggleStates('result')
+      window.hcaptcha?.reset()
     } catch (error) {
       toggleStates('empty')
       formError.textContent = error instanceof Error ? error.message : 'Could not generate the concept.'
       window.hcaptcha?.reset()
+    } finally {
+      if (submitButton) submitButton.disabled = false
     }
   })
 
@@ -153,6 +162,11 @@ ${CONCEPT_SCHEMA}`,
     listInto('features', c.features)
     tagsInto('styleTags', c.style_tags)
     const img = document.getElementById('conceptImage')
+    img.onerror = () => {
+      img.onerror = null
+      img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(carSvgMarkup(c.colorways?.[0] || {}, c.name))}`
+      img.alt = `${c.name} colorway preview (AI render unavailable)`
+    }
     img.src = c.image_url
     img.alt = `${c.name} concept render`
     renderColorwayButtons(c.colorways, c.name)
@@ -178,8 +192,12 @@ ${CONCEPT_SCHEMA}`,
 
   function renderCarSvg(cw, name = '') {
     const mount = document.getElementById('carSvgMount')
-    mount.innerHTML = `
-    <svg viewBox="0 0 780 420" role="img" aria-label="${escHtml(name || cw.name || 'Car concept')} colorway preview">
+    mount.innerHTML = carSvgMarkup(cw, name)
+  }
+
+  function carSvgMarkup(cw, name = '') {
+    return `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 420" role="img" aria-label="${escHtml(name || cw.name || 'Car concept')} colorway preview">
       <defs>
         <linearGradient id="bodyFill" x1="0" x2="1">
           <stop offset="0%" stop-color="${cw.body || '#1d4ed8'}"/>
